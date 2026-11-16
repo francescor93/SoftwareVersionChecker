@@ -12,18 +12,16 @@ import time
 import random
 import sys
 
-RETRYABLE_STATUS = {409, 429, 500, 502, 503, 504}
-VALID_MODES = ("CLASSIC", "SCOPED")
-
-# Determine the script folder dynamically.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(BASE_DIR)
-
-# Load the .env file from the same folder.
-load_dotenv(os.path.join(BASE_DIR, ".env"))
-
-# Custom log file (same path as the script).
-LOG_FILE = os.path.join(BASE_DIR, "software_versions.log")
+# Read a numeric environment setting, using a default when it is unset.
+def env_number(name, default, cast=int):
+    """Read a numeric setting from the environment, falling back to a default when unset."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return cast(raw)
+    except ValueError:
+        raise ValueError(f"Invalid value for {name}: '{raw}'")
 
 # Log a message with a timestamp to the console and the log file.
 def log(msg):
@@ -35,9 +33,12 @@ def log(msg):
 
 # Extract the first version-like value from a string.
 def extract_version(text):
-    """Return the first semantic-like version from a string, or the trimmed raw text if no match exists."""
+    """Return the first semantic-like version from a string, or 'N/A' if no match exists."""
     m = re.search(r"\d+(?:\.\d+){0,2}", text)
-    return m.group(0) if m else text.strip()
+    if m:
+        return m.group(0)
+    log(f"No version found in output: {text.strip()[:200]!r}")
+    return "N/A"
 
 # Run a shell command safely and capture its output.
 def safe_getoutput(cmd):
@@ -129,9 +130,8 @@ def update_confluence_table(versions):
     headers = {"Accept": "application/json"}
 
     # Get the page from Confluence.
-    timeout = int(os.getenv("HTTP_TIMEOUT"))
     url = f"{base_url}/wiki/rest/api/content/{page_id}?expand=body.storage,version"
-    res = requests.get(url, headers=headers, auth=auth, timeout=timeout)
+    res = requests.get(url, headers=headers, auth=auth, timeout=HTTP_TIMEOUT)
     check_response(res)
     data = res.json()
     html = data["body"]["storage"]["value"]
@@ -168,7 +168,7 @@ def update_confluence_table(versions):
         "version": {"number": new_version},
     }
 
-    put_res = requests.put(f"{base_url}/wiki/rest/api/content/{page_id}", json=payload, auth=auth, timeout=timeout)
+    put_res = requests.put(f"{base_url}/wiki/rest/api/content/{page_id}", json=payload, auth=auth, timeout=HTTP_TIMEOUT)
     check_response(put_res)
 
     log(f"Update completed on '{column_name}' at {versions['Last Check']}")
@@ -177,7 +177,7 @@ def update_confluence_table(versions):
 def update_with_retry():
     """Retry the full update cycle after recoverable errors. Returns True if the update succeeds."""
     versions = get_versions()
-    total_attempts = int(os.getenv("MAX_RETRIES")) + 1
+    total_attempts = MAX_RETRIES + 1
 
     for attempt in range(1, total_attempts + 1):
         try:
@@ -195,13 +195,29 @@ def update_with_retry():
                 log("Retry attempts exhausted.")
                 return False
 
-            retry_env = int(os.getenv("RETRY_DELAY"))
-            retry_jitter_env = int(os.getenv("RETRY_JITTER"))
-            delay = retry_env + random.uniform(0, retry_jitter_env)
+            delay = RETRY_DELAY + random.uniform(0, RETRY_JITTER)
             log(f"Retrying in {delay:.0f}s...")
             time.sleep(delay)
 
     return False
+
+# Determine the script folder dynamically.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
+
+# Load the .env file from the same folder.
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# Read configuration values from the environment with defaults and type casting.
+HTTP_TIMEOUT = env_number("HTTP_TIMEOUT", 30, float)
+MAX_RETRIES = env_number("MAX_RETRIES", 5)
+RETRY_DELAY = env_number("RETRY_DELAY", 60, float)
+RETRY_JITTER = env_number("RETRY_JITTER", 10, float)
+RETRYABLE_STATUS = {409, 429, 500, 502, 503, 504}
+VALID_MODES = ("CLASSIC", "SCOPED")
+
+# Custom log file (same path as the script).
+LOG_FILE = os.path.join(BASE_DIR, "software_versions.log")
 
 # Main entry point.
 if __name__ == "__main__":
