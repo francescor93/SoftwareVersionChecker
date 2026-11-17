@@ -65,7 +65,7 @@ def get_versions():
         "MariaDB": extract_version(safe_getoutput("mysql -V | awk '{print $5}' | tr -d ','")),
         "Node.js": extract_version(safe_getoutput("node -v")),
         "NPM": extract_version(safe_getoutput("npm -v")),
-        "Python": extract_version(safe_getoutput("python3 --version || python --version")),
+        "Python": platform.python_version(),
         "Last Check": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     return versions
